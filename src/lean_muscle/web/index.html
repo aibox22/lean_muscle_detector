@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>薄肌检测器</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #1c1917;
+      --muted: #57534e;
+      --line: #e7e5e4;
+      --paper: #fafaf9;
+      --abs: #2563eb;
+      --shoulder: #ea580c;
+      --arm: #16a34a;
+      --total: #dc2626;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", sans-serif;
+      background: var(--paper);
+      color: var(--ink);
+    }
+    main {
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 32px 20px 64px;
+    }
+    h1 { font-size: 28px; font-weight: 650; margin: 0 0 8px; }
+    p.lead { margin: 0 0 24px; color: var(--muted); line-height: 1.5; }
+    form {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    input[type="file"] { font-size: 14px; }
+    button {
+      background: var(--ink);
+      color: white;
+      border: 0;
+      border-radius: 8px;
+      padding: 10px 16px;
+      font-size: 15px;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.5; cursor: wait; }
+    .error {
+      margin-top: 16px;
+      padding: 12px 14px;
+      background: #fef2f2;
+      color: #991b1b;
+      border-radius: 8px;
+    }
+    .result { margin-top: 28px; gap: 20px; }
+    .result:not([hidden]) { display: grid; }
+    .error[hidden],
+    .result[hidden] { display: none; }
+    .total { font-size: 42px; font-weight: 680; letter-spacing: -0.03em; }
+    .total span { color: var(--total); }
+    .sentence { font-size: 18px; line-height: 1.45; margin: 8px 0 0; }
+    .bars { display: grid; gap: 10px; }
+    .bar-row { display: grid; grid-template-columns: 72px 1fr 48px; gap: 8px; align-items: center; }
+    .track { height: 10px; background: var(--line); border-radius: 99px; overflow: hidden; }
+    .fill { height: 100%; border-radius: 99px; }
+    .meta { color: var(--muted); font-size: 13px; }
+    img.debug {
+      width: 100%;
+      height: auto;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: white;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>薄肌检测器</h1>
+    <p class="lead">正面照。手出画没关系，肩和髋要在画面里。核心是腹肌、胸肌、肩腰比，背肌和手臂也记一笔。未标定，不是体脂。</p>
+    <form id="form">
+      <input id="file" type="file" accept="image/jpeg,image/png,image/webp" required />
+      <button id="go" type="submit">打分</button>
+    </form>
+    <div id="error" class="error" hidden></div>
+    <section id="result" class="result" hidden>
+      <div>
+        <div class="total">薄肌 <span id="total"></span></div>
+        <p id="sentence" class="sentence"></p>
+        <p id="meta" class="meta"></p>
+      </div>
+      <div class="bars" id="bars"></div>
+      <img id="debug" class="debug" alt="调试图" />
+    </section>
+  </main>
+  <script>
+    const reasons = {
+      no_person: "画面里没有人",
+      multiple_people: "画面里有两个大小接近的人",
+      low_confidence: "肩或髋没看清",
+      out_of_frame: "肩或髋出画了",
+      no_mask: "没有分出人体轮廓",
+      bad_image: "这张图读不出来",
+      too_large: "照片超过 15MB",
+      gateway_error: "网关调用失败",
+      missing_api_key: "没有配置 VLMRUN_API_KEY",
+    };
+
+    const form = document.querySelector("#form");
+    const fileInput = document.querySelector("#file");
+    const button = document.querySelector("#go");
+    const errorBox = document.querySelector("#error");
+    const result = document.querySelector("#result");
+
+    function bar(label, value, color) {
+      const row = document.createElement("div");
+      row.className = "bar-row";
+      row.innerHTML = `<span>${label}</span><div class="track"><div class="fill" style="width:${Math.max(0, Math.min(100, value))}%;background:${color}"></div></div><span>${value.toFixed(1)}</span>`;
+      return row;
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      errorBox.hidden = true;
+      result.hidden = true;
+      const file = fileInput.files && fileInput.files[0];
+      if (!file) return;
+      button.disabled = true;
+      button.textContent = "在算";
+      try {
+        const body = new FormData();
+        body.append("file", file);
+        const response = await fetch("/analyze", { method: "POST", body });
+        const payload = await response.json();
+        const detail = payload.detail && typeof payload.detail === "object" ? payload.detail : payload;
+        if (!response.ok || !detail.ok) {
+          const reason = detail.reason || "gateway_error";
+          errorBox.textContent = detail.detail || reasons[reason] || "没有打出分";
+          errorBox.hidden = false;
+          return;
+        }
+        document.querySelector("#total").textContent = detail.scores.total.toFixed(1);
+        const sentence = document.querySelector("#sentence");
+        sentence.textContent = detail.sentence || (detail.llm_error ? `总结没写成：${detail.llm_error}` : "");
+        const measures = detail.measures;
+        const chestText = measures.chest_waist_ratio == null
+          ? "胸腰比 —"
+          : `胸腰比 ${Number(measures.chest_waist_ratio).toFixed(2)}`;
+        const armText = measures.arms_visible
+          ? `臂腰比 ${Number(measures.arm_waist_ratio).toFixed(2)}`
+          : `左臂 ${Number(measures.arm_scores[0]).toFixed(0)} · 右臂 ${Number(measures.arm_scores[1]).toFixed(0)}`;
+        document.querySelector("#meta").textContent =
+          `肩腰比 ${measures.shoulder_waist_ratio.toFixed(2)} · ${chestText} · ${armText} · 腹肌沟 ${measures.abs_grooves} · 未标定`;
+        const bars = document.querySelector("#bars");
+        bars.replaceChildren(
+          bar("腹肌", detail.scores.abs, "#2563eb"),
+          bar("胸肌", detail.scores.chest, "#b45309"),
+          bar("肩腰", detail.scores.shoulder, "#ea580c"),
+          bar("背肌", detail.scores.back, "#0e7490"),
+          bar("手臂", detail.scores.arm, "#16a34a"),
+        );
+        document.querySelector("#debug").src = `data:image/png;base64,${detail.debug_image_png_base64}`;
+        result.hidden = false;
+      } catch (err) {
+        errorBox.textContent = "请求没有完成";
+        errorBox.hidden = false;
+      } finally {
+        button.disabled = false;
+        button.textContent = "打分";
+      }
+    });
+  </script>
+</body>
+</html>

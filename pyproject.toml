@@ -1,0 +1,30 @@
+[project]
+name = "lean-muscle-detector"
+version = "0.1.0"
+description = "Score a front-facing photo for lean-muscle proportions."
+requires-python = ">=3.11"
+dependencies = [
+    "openai>=1.40",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "python-multipart>=0.0.9",
+    "opencv-python-headless>=4.10",
+    "numpy>=1.26",
+    "pillow>=10",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx>=0.27"]
+
+[project.scripts]
+lean-muscle = "lean_muscle.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
